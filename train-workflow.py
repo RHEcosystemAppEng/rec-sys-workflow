@@ -169,10 +169,9 @@ def train_model(item_df_input: Input[Dataset], user_df_input: Input[Dataset], in
 @dsl.component(base_image=BASE_IMAGE, packages_to_install=['psycopg2'])
 def load_data_from_feast(item_df_output: Output[Dataset], user_df_output: Output[Dataset], interaction_df_output: Output[Dataset]):
     from feast import FeatureStore
-    from datetime import datetime
     import pandas as pd
     import os
-    import psycopg2
+    from service.dataset_provider import LocalDatasetProvider
     from sqlalchemy import create_engine, text
     import subprocess
 
@@ -195,37 +194,12 @@ def load_data_from_feast(item_df_output: Output[Dataset], user_df_output: Output
     store = FeatureStore(repo_path="feature_repo/")
     store.refresh_registry()
     print('registry refreshed')
-    # load feature services
-    item_service = store.get_feature_service("item_service")
-    user_service = store.get_feature_service("user_service")
-    interaction_service = store.get_feature_service("interaction_service")
+    dataset_provider = LocalDatasetProvider(store)
 
-    interactions_ids = pd.read_parquet('./feature_repo/data/recommendation_interactions.parquet')
-    user_ids = interactions_ids['user_id'].unique().tolist()
-    item_ids = interactions_ids['item_id'].unique().tolist()
-
-    # select which items to use for the training
-    item_entity_df = pd.DataFrame.from_dict(
-        {
-            'item_id': item_ids,
-            'event_timestamp': [datetime(2025, 1, 1)] * len(item_ids)
-        }
-    )
-    # select which users to use for the training
-    user_entity_df = pd.DataFrame.from_dict(
-        {
-            'user_id': user_ids,
-            'event_timestamp': [datetime(2025, 1, 1)] * len(user_ids)
-        }
-    )
-    # Select which item-user interactions to use for the training
-    item_user_interactions_df = interactions_ids[['item_id', 'user_id']].copy()
-    item_user_interactions_df['event_timestamp'] = datetime(2025, 1, 1)
-
-    # retrive datasets for training
-    item_df = store.get_historical_features(entity_df=item_entity_df, features=item_service).to_df()
-    user_df = store.get_historical_features(entity_df=user_entity_df, features=user_service).to_df()
-    interaction_df = store.get_historical_features(entity_df=item_user_interactions_df, features=interaction_service).to_df()
+    # retrieve datasets for training
+    item_df = dataset_provider.item_df()
+    user_df = dataset_provider.user_df()
+    interaction_df = dataset_provider.interaction_df()
 
     uri = os.getenv('uri', None)
     engine = create_engine(uri)
